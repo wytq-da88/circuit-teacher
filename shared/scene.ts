@@ -56,7 +56,7 @@ function createSceneRuntime(symbol:typeof symbolMarkup, endpoint:typeof endpoint
     for(const j of circuit.junctions)content+=`<circle cx="${j.x}" cy="${j.y}" r="5" fill="#26384e"/>`;
     for(const c of circuit.components) {
       const lit=c.type==='lamp'&&current.lit.has(c.id)&&current.connected.activeComponentIds.includes(c.id);
-      const color=highlighted.has(c.id)?'#cc7210':'#21384c';
+      const color=highlighted.has(c.id)?'#99530b':'#21384c';
       content+=`<g data-component="${escape(c.id)}" data-lit="${lit}"${c.type==='switch'?` data-switch="${escape(c.id)}" data-closed="${current.switches[c.id]}"`:''}>`;
       if(highlighted.has(c.id)||lit)content+=`<circle cx="${c.x}" cy="${c.y}" r="42" fill="${lit?'#fff5ca':'#fff0dc'}"/>`;
       content+=`<g transform="translate(${c.x} ${c.y}) rotate(${c.rotation})" color="${color}" stroke="currentColor" stroke-width="3" stroke-linecap="round">${symbol(c.type,current.switches[c.id],lit)}</g>`;

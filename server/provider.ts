@@ -32,7 +32,7 @@ Lesson={steps:[{id:string,title:string,durationMs:整数(500到120000),caption:s
 
 export function recognitionMessages(project: Project): ChatMessage[] {
   const photo = validatePhoto(project.source);
-  return [ { role: 'system', content: SCHEMA + '\n从图片重建元件和连线，回复{circuit:Circuit,uncertainties:[{id:string,message:string,targetIds:string[],resolved:false}],summary:string}。不确定的数值或连接必须写入uncertainties，不能假装已经确认。' },
+  return [ { role: 'system', content: '首先判断照片是否属于30个以内基础直流教学电路。工业线束、连接器装配、总线布线、PCB、交流或含不支持元件的图，返回{supported:false,reason:string}并停止重建。不得用电阻、电源等现有元件代替连接器、线束、电机或控制器；不得凭空补出负载和连接。模糊到无法判断图类型时也返回supported:false。\n' + SCHEMA + '\n属于支持范围时，从图片重建元件和连线，回复{supported:true,circuit:Circuit,uncertainties:[{id:string,message:string,targetIds:string[],resolved:false}],summary:string}。不确定的数值或连接必须写入uncertainties，不能假装已经确认。' },
     { role: 'user', content: [{ type: 'text', text: '识别这张电路照片，排成清晰可编辑的电路图。只返回指定JSON。' }, { type: 'image_url', image_url: { url: photo } }] } ];
 }
 
@@ -83,7 +83,11 @@ export async function callProvider(settings: ProviderSettings, messages: ChatMes
     const message = isRecord(first) && isRecord(first.message) ? first.message : undefined;
     if (!message || typeof message.content !== 'string') throw new ApiError(502, '模型未返回结构化文本');
     let content: unknown;
-    try { content = JSON.parse(message.content); }
+    const text=message.content.trim();
+    // Some compatible APIs wrap JSON despite the prompt. Accept only one complete
+    // JSON fence; never extract an object from prose or evaluate generated code.
+    const fenced=/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i.exec(text);
+    try { content = JSON.parse(fenced ? fenced[1] : text); }
     catch { throw new ApiError(502, '模型输出不是严格 JSON，请重试'); }
     if (!isRecord(content)) throw new ApiError(502, '模型输出必须为 JSON 对象');
     return { content, usage };

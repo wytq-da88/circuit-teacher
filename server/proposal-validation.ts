@@ -8,6 +8,8 @@ export function validateModelProposal(project:Project,kind:'recognize'|'propose'
     const summary=typeof content.summary==='string'&&content.summary.length<=2000?content.summary:kind==='recognize'?'识别照片中的电路':'根据要求调整内容';
     let proposal:Proposal;
     if(kind==='recognize'){
+      if(content.supported===false)throw new ApiError(422,'当前图片超出第一版支持的基础直流教学电路范围，或图片类型无法确认。工业线束、连接器、电机和控制器图需要专用元件与端子定义，请改用基础电路照片。原工程已保留。');
+      if(content.supported!==true)throw new ApiError(502,'模型未确认图片类型，请重试识别。第一版仅支持30个以内的基础直流教学电路，原工程已保留。');
       if(!isRecord(content.circuit)||!Array.isArray(content.uncertainties))throw new Error();
       proposal=makeProposal(project,content.circuit as unknown as Circuit,'circuit',summary);
       proposal.project.lesson={steps:[]};proposal.project.review={confirmed:false};

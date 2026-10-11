@@ -78,7 +78,7 @@ it('returns the uploaded image to the MCP task and keeps uncertain recognition u
   const id=queued.body.task.id;
   const input=await api.request(`/workbuddy/tasks/${id}/input`);
   expect(JSON.stringify(input.body.messages)).toContain(project.source.dataUrl);
-  await api.request(`/workbuddy/tasks/${id}/result`,{content:{circuit:project.circuit,uncertainties:[{id:'u1',message:'请确认数值',targetIds:[project.circuit.components[0].id],resolved:true}]}});
+  await api.request(`/workbuddy/tasks/${id}/result`,{content:{supported:true,circuit:project.circuit,uncertainties:[{id:'u1',message:'请确认数值',targetIds:[project.circuit.components[0].id],resolved:true}]}});
   const ready=await api.request(`/workbuddy/tasks/${id}`);
   expect(ready.body.task.proposal.project.review.confirmed).toBe(false);
   expect(ready.body.task.proposal.project.uncertainties[0].resolved).toBe(false);
@@ -111,7 +111,7 @@ it('exposes queued photos through real MCP stdio and accepts a structured draft 
     expect((await client.listTools()).tools.map(tool=>tool.name)).toContain('circuit_submit_result');
     const input=await client.callTool({name:'circuit_get_task',arguments:{taskId:queued.body.task.id}});
     expect((input.content as any[]).find(block=>block.type==='image')).toMatchObject({mimeType:'image/png',data:project.source.dataUrl.split(',')[1]});
-    const submitted=await client.callTool({name:'circuit_submit_result',arguments:{taskId:queued.body.task.id,content:{circuit:project.circuit,uncertainties:[],summary:'MCP 返回草稿'}}});
+    const submitted=await client.callTool({name:'circuit_submit_result',arguments:{taskId:queued.body.task.id,content:{supported:true,circuit:project.circuit,uncertainties:[],summary:'MCP 返回草稿'}}});
     expect(submitted.isError).not.toBe(true);
     expect((await api.request(`/workbuddy/tasks/${queued.body.task.id}`)).body.task.proposal.summary).toBe('MCP 返回草稿');
   }finally{await client.close();await transport.close();}

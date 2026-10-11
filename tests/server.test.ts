@@ -201,7 +201,7 @@ describe('real OpenAI-compatible HTTP boundary',()=>{
   });
   it('sends visual content and schema instructions, records usage, and clears stale lessons on recognition',async()=>{
     const project=fixture();
-    const mock=await provider({content:{circuit:{components:[{...project.circuit.components[0],id:'recognized',label:'识别电源'}],junctions:[],wires:[]},uncertainties:[{id:'u1',message:'请确认电压',targetIds:['recognized'],resolved:false}],summary:'识别完成'}});
+    const mock=await provider({content:{supported:true,circuit:{components:[{...project.circuit.components[0],id:'recognized',label:'识别电源'}],junctions:[],wires:[]},uncertainties:[{id:'u1',message:'请确认电压',targetIds:['recognized'],resolved:false}],summary:'识别完成'}});
     const api=await start(); await configure(api,mock.url);
     await api.request(`/api/projects/${project.id}`,{project},'PUT');
     const result=await api.request('/api/recognize',{project});
@@ -227,6 +227,15 @@ describe('real OpenAI-compatible HTTP boundary',()=>{
     expect(response.status).toBe(200); const proposed=response.body.proposal.project;
     expect(proposed.circuit).toEqual(project.circuit);expect(proposed.title).toBe('测试电路');expect(proposed.source).toEqual(project.source);expect(proposed.metrics).toEqual(project.metrics);
     expect(proposed.lesson.steps[0].id).toBe('s-new');
+  });
+  it('rejects industrial recognition without changing the saved project',async()=>{
+    const project=fixture();
+    const mock=await provider({content:{supported:false,reason:'工业线束',circuit:project.circuit,uncertainties:[]}});
+    const api=await start();await configure(api,mock.url);
+    await api.request(`/api/projects/${project.id}`,{project},'PUT');
+    const response=await api.request('/api/recognize',{project});
+    expect(response.status).toBe(422);expect(response.body.error).toContain('基础直流');
+    expect((await api.request(`/api/projects/${project.id}`)).body.project).toEqual(project);
   });
   it.each([
     {status:401}, {rawContent:'not-json'}, {content:{circuit:{components:[{id:'broken',type:'battery',x:-50}],junctions:[],wires:[]}}},

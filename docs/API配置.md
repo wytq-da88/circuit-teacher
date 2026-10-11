@@ -11,7 +11,9 @@
 
 Agnes 官方提供免费/default Key 类型，适用于测试和低频使用；可用模型、余额、速率及收费规则以控制台和 [官方 Token Plan 文档](https://agnes-ai.com/en/docs/tokenplan) 为准。多建免费 Key 不会增加同一额度池。本项目不承诺无限免费调用，也不提供共享密钥。
 
-上述地址与示例模型来自 [Agnes 官方 API FAQ](https://agnes-ai.com/en/docs/faqs)；其 [官方模型仓库](https://github.com/AgnesAI-Labs/AgnesAI-Models) 列出 `agnes-2.5-flash` 的文字和视觉输入能力。实际图片能力与识别效果仍须用你的账号实测。
+上述地址与示例模型来自 [Agnes 官方 API FAQ](https://agnes-ai.com/en/docs/faqs)；其 [官方模型仓库](https://github.com/AgnesAI-Labs/AgnesAI-Models) 列出 `agnes-2.5-flash` 的文字和视觉输入能力。少量真实调用已验证基础电路测试图和中文修改；不同照片的效果仍需用你的账号实测。当前兼容单个完整 JSON 对象及其可选 JSON 代码框，混杂说明文字、多个对象或脚本仍会拒绝，不执行模型代码。
+
+识别范围为30个以内的电源、开关、电阻、滑动变阻器、灯泡、电流表、电压表与导线。识别时先判断图片类型；工业线束、连接器装配、总线布线、PCB和交流图会提示超出范围，保留原工程。基础电路也需要逐一核对正负极、引脚和导线；元件数量正确不代表接线准确。
 
 ## OpenAI、DeepSeek 与兼容 API
 

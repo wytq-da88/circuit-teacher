@@ -17,7 +17,7 @@ export function PhotoPanel({project,edit,onRecognize,busy,onError}:{project:Proj
  </div>
  <div className="photo-toolbar"><button className="subtle-button" disabled={working} onClick={()=>input.current?.click()}><Upload size={13}/>{project.source?'更换':'上传图片'}</button><button className="icon-button" title="顺时针旋转原图" disabled={!project.source||working} onClick={()=>void transform('rotate')}><RotateCw size={15}/></button><button className="icon-button" title="裁剪原图" disabled={!project.source||working} onClick={()=>setCrop({x:0,y:0,width:100,height:100})}><Crop size={15}/></button></div>
  <button className="button full" disabled={!project.source||busy||working} onClick={onRecognize}><ScanLine size={16}/>{busy?'模型正在识别…':'识别电路，生成待确认草稿'}</button>
- <p className="tiny muted photo-tip">上传后才会调用已配置的视觉模型。识别结果需要你确认和校对。</p>
+ <p className="tiny muted photo-tip">支持30个以内基础直流元件：电源、开关、电阻、滑动变阻器、灯泡、电流表、电压表。工业线束与连接器图暂不支持。点击识别才会调用模型，结果需要校对。</p>
  <div className="divider"/>
  <div className="section-head"><span>校对清单</span><span className={`count-pill ${unresolved?'warm':''}`}>{unresolved} 项待确认</span></div>
  {project.uncertainties.length>0?<div className="uncertainty-list">{project.uncertainties.map(u=><label className="uncertainty" key={u.id}><input type="checkbox" checked={u.resolved} onChange={e=>edit(p=>{const item=p.uncertainties.find(item=>item.id===u.id);if(item)item.resolved=e.target.checked;p.review={confirmed:false};})}/><span>{u.message}</span></label>)}</div>:<div className="review-list"><div><span>1</span> 元件名称、数值与原图一致</div><div><span>2</span> 逐一检查连接与交叉导线</div><div><span>3</span> 核对开关初始状态</div></div>}
