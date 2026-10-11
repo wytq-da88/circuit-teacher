@@ -1,9 +1,12 @@
 import type { Project, ProviderSettings, Usage } from '../shared/types';
 import { ApiError, isRecord } from './errors';
+import {apiProvider,normalizeApiBaseUrl} from '../shared/provider-config';
+import {providerDispatcher} from './network';
+import type {Dispatcher} from 'undici';
 
 const MAX_RESPONSE = 2 * 1024 * 1024;
 const MAX_IMAGE = 10 * 1024 * 1024;
-type ChatMessage = { role: 'system' | 'user'; content: string | ({ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } })[] };
+export type ChatMessage = { role: 'system' | 'user'; content: string | ({ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } })[] };
 
 export function validatePhoto(source: Project['source']): string {
   if (!source || typeof source.dataUrl !== 'string') throw new ApiError(400, '请先选择电路照片');
@@ -44,29 +47,27 @@ export async function callProvider(settings: ProviderSettings, messages: ChatMes
   if (!settings.apiKey) throw new ApiError(400, '请先在设置中填写 API 密钥');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), settings.timeoutMs);
+  let dispatcher:Dispatcher|undefined;
   try {
-    const response = await fetch(`${settings.baseUrl}/chat/completions`, {
+    dispatcher=await providerDispatcher(settings);
+    const request:RequestInit&{dispatcher?:Dispatcher}={
       method: 'POST', redirect: 'error', signal: controller.signal,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${settings.apiKey}` },
-      body: JSON.stringify({ model: settings.model, messages, response_format: { type: 'json_object' }, temperature: 0.2 }),
-    });
-    if (!response.ok) { await response.body?.cancel(); throw new ApiError(502, `模型服务请求失败（HTTP ${response.status}），请检查地址、模型与密钥`); }
-    const contentLength = Number(response.headers.get('content-length'));
-    if (contentLength > MAX_RESPONSE) { await response.body?.cancel(); throw new ApiError(502, '模型响应超过 2MB 限制'); }
-    const reader = response.body?.getReader();
-    if (!reader) throw new ApiError(502, '模型服务没有返回内容');
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_RESPONSE) { await reader.cancel(); throw new ApiError(502, '模型响应超过 2MB 限制'); }
-      chunks.push(value);
+      body: JSON.stringify({ model: settings.model, messages,
+        ...(settings.jsonMode!==false?{response_format:{type:'json_object'}}:{}),
+        ...(apiProvider(settings.baseUrl)==='deepseek'?{thinking:{type:'disabled'}}:{}),
+      }),
+      ...(dispatcher?{dispatcher}:{}),
+    };
+    const response = await fetch(`${normalizeApiBaseUrl(settings.baseUrl)}/chat/completions`,request);
+    if (!response.ok) {
+      let errorBody:unknown;
+      try{errorBody=JSON.parse(await readBoundedResponse(response,32768));}catch{/* Only classify errors; never expose raw diagnostics or keys. */}
+      throw providerHttpError(response.status,errorBody);
     }
     let envelope: unknown;
-    try { envelope = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-    catch { throw new ApiError(502, '模型服务返回了无效 JSON'); }
+    const responseText=await readBoundedResponse(response,MAX_RESPONSE);
+    try { envelope = JSON.parse(responseText); } catch { throw new ApiError(502, '模型服务返回了无效 JSON，请核对是否填写了 API 接口地址'); }
     if (!isRecord(envelope)) throw new ApiError(502, '模型响应结构无效');
     let usage: Usage | undefined;
     if (isRecord(envelope.usage)) {
@@ -78,6 +79,7 @@ export async function callProvider(settings: ProviderSettings, messages: ChatMes
     }
     const choices = envelope.choices;
     const first = Array.isArray(choices) ? choices[0] : undefined;
+    if(isRecord(first)&&first.finish_reason==='length')throw new ApiError(502,'模型输出因长度限制被截断，请缩小电路或简化修改要求后重试');
     const message = isRecord(first) && isRecord(first.message) ? first.message : undefined;
     if (!message || typeof message.content !== 'string') throw new ApiError(502, '模型未返回结构化文本');
     let content: unknown;
@@ -88,8 +90,42 @@ export async function callProvider(settings: ProviderSettings, messages: ChatMes
   } catch (error) {
     if (controller.signal.aborted) throw new ApiError(504, '模型请求超时，请稍后重试或增加超时时间');
     if (error instanceof ApiError) throw error;
-    throw new ApiError(502, '无法连接模型服务，请检查 API 地址与网络');
-  } finally { clearTimeout(timer); }
+    const cause=isRecord(error)&&isRecord(error.cause)?error.cause:undefined;
+    const code=cause?.code;
+    const hint=code==='ENOTFOUND'?'无法解析 API 域名，请检查地址或 DNS'
+      :code==='ECONNREFUSED'?'API 地址拒绝连接，请检查地址、端口或本机代理是否启动'
+      :code==='UND_ERR_CONNECT_TIMEOUT'||code==='ETIMEDOUT'?'连接 API 超时，请检查本机网络及代理设置'
+      :typeof code==='string'&&/CERT|TLS/.test(code)?'API 的 HTTPS 证书验证失败，请检查地址和本机证书配置'
+      :'无法连接模型服务，请检查 API 地址与网络；这是模型连接问题，本机配置仍已保存';
+    throw new ApiError(502,hint);
+  } finally { clearTimeout(timer);await dispatcher?.destroy(); }
+}
+
+async function readBoundedResponse(response:Response,limit:number):Promise<string> {
+  if(Number(response.headers.get('content-length'))>limit){await response.body?.cancel();throw new ApiError(502,'模型响应超过 2MB 限制');}
+  const reader=response.body?.getReader();if(!reader)throw new ApiError(502,'模型服务没有返回内容');
+  const chunks:Uint8Array[]=[];let size=0;
+  for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;
+    if(size>limit){await reader.cancel();throw new ApiError(502,'模型响应超过 2MB 限制');}chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+function providerHttpError(status:number,body:unknown):ApiError {
+  const error=isRecord(body)&&isRecord(body.error)?body.error:undefined;
+  const code=typeof error?.code==='string'?error.code:'';
+  const message=typeof error?.message==='string'?error.message:'';
+  let hint='模型服务请求失败，请核对地址、模型名称与服务商状态';
+  if(status===401)hint='API 密钥无效或已过期，请填写当前服务商的 API Key';
+  else if(status===403)hint='账号或当前网络没有调用权限，请检查服务商账户与地区权限';
+  else if(status===402)hint='服务商账户余额不足，请在服务商控制台检查余额';
+  else if(status===404)hint=code==='model_not_found'||/model/i.test(message)?'模型名称不存在或账号无权使用，请填写控制台提供的模型 ID':'API 接口不存在，请填写接口根地址，或核对 Chat Completions 路径';
+  else if(status===429)hint=code==='insufficient_quota'||/quota|balance|credit|余额|额度/i.test(message)?'服务商账户额度不足，请检查 API 额度；客户端会员额度是否适用于 API 以服务商规则为准':'请求频率过高，请稍后重试或检查服务商限额';
+  else if(status===400&&/response_format|json.?mode|json_object/i.test(message))hint='模型不支持当前 JSON 模式，请关闭设置中的 JSON 模式后重试';
+  else if(status===400&&/image|vision|多模态|图片/i.test(message))hint='当前模型不接受图片，请改用支持视觉输入的模型；DeepSeek 官方照片识别可选 deepseek-flash';
+  else if(status===400)hint='模型拒绝了请求参数，请核对模型 ID，以及是否支持 Chat Completions 和 JSON 输出';
+  else if(status>=500)hint='模型服务暂时不可用，请稍后重试';
+  return new ApiError(502,`${hint}（HTTP ${status}）`);
 }
 
 export const connectivityMessages: ChatMessage[] = [ { role: 'system', content: '请只返回严格 JSON 对象。' }, { role: 'user', content: '连接测试，请返回 {"ok":true}。' } ];

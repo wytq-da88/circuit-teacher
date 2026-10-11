@@ -6,13 +6,13 @@
 
 一个中文、本机运行的网页工作台，适合教师、培训机构和科普作者制作基础直流电路课件。工程、配置和成品保存在程序目录内。可手动编辑，也可接入你自己的视觉 API。
 
-当前为 **v0.1.0 公开预览版**。真实照片识别的准确率尚待使用可用视觉 API 实测；内置案例是人工模板。电流、灯泡和开关动画属于教学示意，不计算真实电流、电压或波形。
+当前为 **v0.1.1 公开预览版**。支持 Agnes AI（自己的免费 Key）、OpenAI、DeepSeek 与其他兼容 API，也可用本地 MCP 插件接入 WorkBuddy 的模型。真实照片识别的准确率尚待使用可用账号实测；内置案例是人工模板。电流、灯泡和开关动画属于教学示意，不计算真实电流、电压或波形。
 
 ![离线课件实际输出示例](docs/export-offline.png)
 
 ## 下载与启动
 
-从 [v0.1.0 下载页](https://github.com/wytq-da88/circuit-teacher/releases/tag/v0.1.0) 下载 `circuit-teacher-v0.1.0-source.zip`。这是带启动脚本的源码包；需要 **Node.js 22 或更新版本**，推荐 Node.js 24。下载包不含 Node.js、API 账户、浏览器或 FFmpeg。
+从 [v0.1.1 下载页](https://github.com/wytq-da88/circuit-teacher/releases/tag/v0.1.1) 下载 `circuit-teacher-v0.1.1-source.zip`。这是带启动脚本的源码包；需要 **Node.js 22 或更新版本**，推荐 Node.js 24。下载包不含 Node.js、API 账户、浏览器或 FFmpeg。
 
 Windows：
 
@@ -83,9 +83,13 @@ Linux ARM64 需要自行安装 Chromium 并设置视频浏览器路径。系统�
 
 ## AI 与本地数据
 
-需要支持 `/chat/completions`、图片消息和 JSON 文本输出的兼容 API。仅文本模型不能识图。连接测试会真实调用配置的服务，费用由该服务决定；本项目不附带 API 密钥或额度。
+在“AI 设置”选择服务商。Agnes AI 预设使用 `https://apihub.agnes-ai.com/v1` 和 `agnes-2.5-flash`，可填写自己的免费/default Key；免费额度以其控制台为准。OpenAI 与 DeepSeek 均有独立预设，支持完整接口地址整理、可选 JSON 模式、1–300 秒超时以及 Windows 系统 HTTP 代理。网络或接口错误会显示可处理的中文原因，当前工程仍保留。配置方法见 [AI 配置说明](docs/API配置.md)。
 
-识别时，图片会发送到你配置的 API；中文修改时，会发送结构化工程与指令。AI 返回的数据先校验并预览，不执行模型生成的脚本。API 超时、错误 JSON 或无效引用不会覆盖当前成果。
+API 方式需要支持 `/chat/completions`、图片消息和 JSON 文本输出。仅文本模型不能识图。连接测试会真实调用配置的服务，费用由该服务决定；本项目不附带 API 密钥或额度。
+
+**使用 WorkBuddy：** 启动工坊后运行 `setup-workbuddy.cmd`（或 `npm run setup:workbuddy`），在 WorkBuddy 中启用生成的自定义 MCP 配置；工坊选择“WorkBuddy 本地插件”。把网页生成的任务指令发给 WorkBuddy，它的当前模型会读取任务并回传待确认草稿，用量由其账号承担。无需在工坊填写 WorkBuddy 密钥。详见 [WorkBuddy 接入说明](docs/WorkBuddy接入.md)。
+
+API 识别时，图片会发送到你配置的服务；中文修改时，会发送结构化工程与指令。WorkBuddy 方式由其当前模型处理用户主动提交的待办。AI 返回的数据先校验并预览，不执行模型生成的脚本。API 超时、错误 JSON 或无效引用不会覆盖当前成果。
 
 密钥保存在本机 `data/` 配置文件中，**未加密**，不通过配置读取接口回传，也不写入工程导出或运行日志。不要分享 `data/`。导出的工程 JSON 含原图，分享前请检查图片内容。
 

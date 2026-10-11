@@ -1,11 +1,14 @@
 import express, { type ErrorRequestHandler } from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeProposal, validateProject } from '../shared/model';
-import type { Circuit, ExportFormat, ExportJob, Lesson, Project } from '../shared/types';
-import { ApiError, isRecord } from './errors';
+import { validateProject } from '../shared/model';
+import type { ExportFormat, ExportJob, Project } from '../shared/types';
+import { ApiError } from './errors';
 import { callProvider, connectivityMessages, proposalMessages, recognitionMessages } from './provider';
 import { LocalStore, publicSettings } from './store';
+import {WorkBuddyQueue} from './workbuddy';
+import {validateModelProposal} from './proposal-validation';
+import {systemProxy} from './network';
 
 export const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 interface AppOptions { dataDir?: string }
@@ -17,14 +20,11 @@ function inputProject(input: unknown): Project {
 function safeJob(job: ExportJob) {
   return { ...job };
 }
-function safeSummary(input: unknown, fallback: string): string {
-  return typeof input === 'string' && input.length <= 2000 ? input : fallback;
-}
-
 export async function createApp(options: AppOptions = {}) {
   const app = express();
   const store = new LocalStore(options.dataDir ?? path.join(PROJECT_ROOT, 'data'));
   await store.init();
+  const workbuddy=new WorkBuddyQueue(store.dataDir);await workbuddy.init();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
     const host = req.headers.host;
@@ -50,47 +50,45 @@ export async function createApp(options: AppOptions = {}) {
   app.get('/api/projects/:id/revisions', async (req, res) => res.json({ revisions: await store.revisions(req.params.id) }));
   app.post('/api/projects/:id/restore', async (req, res) => res.json({ project: await store.restoreProject(req.params.id, req.body?.revision) }));
   app.get('/api/settings', async (_req, res) => res.json({ settings: publicSettings(await store.getSettings()) }));
+  app.get('/api/settings/system-proxy',async(_req,res)=>res.json({proxyUrl:await systemProxy()??''}));
   app.put('/api/settings', async (req, res) => res.json({ settings: publicSettings(await store.saveSettings(req.body)) }));
   app.get('/api/usage', async (_req, res) => res.json({ usage: await store.usage() }));
   app.post('/api/settings/test', async (_req, res) => {
-    const result = await callProvider(await store.getSettings(), connectivityMessages, usage => store.recordUsage(usage));
+    const settings=await store.getSettings();
+    if(settings.mode==='workbuddy'){
+      if(!workbuddy.status().connected)throw new ApiError(409,'WorkBuddy 插件尚未连接，请在 WorkBuddy 中启用工坊的 MCP 配置后重试');
+      res.json({ok:true,message:'WorkBuddy 本地插件已连接；模型与图片能力请在 WorkBuddy 中完成实际任务验证'});return;
+    }
+    const result = await callProvider(settings, connectivityMessages, usage => store.recordUsage(usage));
     if (result.content.ok !== true) throw new ApiError(502, '模型返回内容不符合连接测试格式');
     res.json({ ok: true, message: '模型连接正常，已收到有效 JSON 响应' });
   });
   app.post('/api/recognize', async (req, res) => {
     const project = inputProject(req.body?.project);
     const messages = recognitionMessages(project);
-    const { content, usage } = await callProvider(await store.getSettings(), messages, value => store.recordUsage(value));
-    try {
-      if (!isRecord(content.circuit) || !Array.isArray(content.uncertainties)) throw new Error();
-      const proposal = makeProposal(project, content.circuit as unknown as Circuit, 'circuit', safeSummary(content.summary, '识别照片中的电路'));
-      proposal.project.lesson = { steps: [] };
-      proposal.project.review = { confirmed: false };
-      proposal.project.uncertainties = content.uncertainties.map((item: unknown) => {
-        if (!isRecord(item)) throw new Error();
-        return { id: item.id, message: item.message, targetIds: item.targetIds, resolved: false };
-      }) as Project['uncertainties'];
-      proposal.project = validateProject(proposal.project);
-      proposal.changes.push('清空原课件步骤，待完成识别校对后重新编排');
-      proposal.usage = usage;
-      res.json({ proposal });
-    } catch { throw new ApiError(502, '识别结果未通过电路校验，请重试或手工绘制'); }
+    const settings=await store.getSettings();
+    if(settings.mode==='workbuddy'){res.status(202).json({task:await workbuddy.create(project,'recognize')});return;}
+    const { content, usage } = await callProvider(settings, messages, value => store.recordUsage(value));
+    res.json({proposal:validateModelProposal(project,'recognize',undefined,content,usage)});
   });
   app.post('/api/propose', async (req, res) => {
     const project = inputProject(req.body?.project);
     const { mode, prompt } = req.body ?? {};
     if (mode !== 'circuit' && mode !== 'lesson') throw new ApiError(400, '请选择电路或演示修改模式');
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 8000) throw new ApiError(400, '请填写 1–8000 字的修改要求');
-    const { content, usage } = await callProvider(await store.getSettings(), proposalMessages(project, prompt.trim(), mode), value => store.recordUsage(value));
-    try {
-      const candidate = content[mode];
-      if (!isRecord(candidate)) throw new Error();
-      const proposal = makeProposal(project, candidate as unknown as Circuit | Lesson, mode, safeSummary(content.summary, '根据要求调整内容'));
-      proposal.project = validateProject(proposal.project);
-      proposal.usage = usage;
-      res.json({ proposal });
-    } catch { throw new ApiError(502, '模型提案未通过校验，请调整要求后重试'); }
+    const settings=await store.getSettings();
+    if(settings.mode==='workbuddy'){res.status(202).json({task:await workbuddy.create(project,'propose',mode,prompt.trim())});return;}
+    const { content, usage } = await callProvider(settings, proposalMessages(project, prompt.trim(), mode), value => store.recordUsage(value));
+    res.json({proposal:validateModelProposal(project,'propose',mode,content,usage)});
   });
+  app.get('/api/workbuddy/setup',(_req,res)=>res.json({configuration:{mcpServers:{'circuit-teacher':{type:'stdio',command:process.execPath,args:[path.join(PROJECT_ROOT,'scripts','workbuddy-mcp.mjs')]}}}}));
+  app.get('/api/workbuddy/status',(_req,res)=>res.json(workbuddy.status()));
+  app.post('/api/workbuddy/connect',(_req,res)=>res.json(workbuddy.connect()));
+  app.get('/api/workbuddy/tasks',async(_req,res)=>res.json({tasks:await workbuddy.list()}));
+  app.get('/api/workbuddy/tasks/:id',async(req,res)=>res.json({task:await workbuddy.get(req.params.id)}));
+  app.get('/api/workbuddy/tasks/:id/input',async(req,res)=>res.json(await workbuddy.input(req.params.id)));
+  app.post('/api/workbuddy/tasks/:id/result',async(req,res)=>res.json({task:await workbuddy.complete(req.params.id,req.body?.content)}));
+  app.post('/api/workbuddy/tasks/:id/cancel',async(req,res)=>res.json({task:await workbuddy.cancel(req.params.id)}));
   app.post('/api/exports', async (req, res) => {
     const project = inputProject(req.body?.project);
     const { format, timeMs = 0 } = req.body ?? {};

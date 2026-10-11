@@ -4,17 +4,18 @@ import path from 'node:path';
 import { touchProject, validateProject } from '../shared/model';
 import type { Project, ProjectSummary, ProviderSettings, RevisionSummary, Usage } from '../shared/types';
 import { ApiError, isRecord } from './errors';
+import { apiProvider,normalizeApiBaseUrl,normalizeProxyUrl } from '../shared/provider-config';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const locks = new Map<string, Promise<unknown>>();
-const DEFAULT_SETTINGS: ProviderSettings = { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini', timeoutMs: 60000 };
+const DEFAULT_SETTINGS: ProviderSettings = { baseUrl: 'https://apihub.agnes-ai.com/v1', model: 'agnes-2.5-flash', timeoutMs: 120000,mode:'api',jsonMode:false,proxyMode:'system' };
 
 export function requireProjectId(id: string): string {
   if (!UUID.test(id)) throw new ApiError(400, '工程编号无效');
   return id.toLowerCase();
 }
 
-async function serialized<T>(key: string, operation: () => Promise<T>): Promise<T> {
+export async function serialized<T>(key: string, operation: () => Promise<T>): Promise<T> {
   const preceding = locks.get(key) ?? Promise.resolve();
   const current = preceding.catch(() => undefined).then(operation);
   locks.set(key, current);
@@ -22,7 +23,7 @@ async function serialized<T>(key: string, operation: () => Promise<T>): Promise<
   finally { if (locks.get(key) === current) locks.delete(key); }
 }
 
-async function readJson(filename: string): Promise<unknown | undefined> {
+export async function readJson(filename: string): Promise<unknown | undefined> {
   try { return JSON.parse(await readFile(filename, 'utf8')); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
@@ -30,7 +31,7 @@ async function readJson(filename: string): Promise<unknown | undefined> {
   }
 }
 
-async function atomicJson(filename: string, value: unknown): Promise<void> {
+export async function atomicJson(filename: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(filename), { recursive: true });
   const temporary = `${filename}.${randomUUID()}.tmp`;
   try {
@@ -46,25 +47,36 @@ function canonical(value: unknown): string {
 }
 
 export function publicSettings(settings: ProviderSettings): ProviderSettings {
-  return { baseUrl: settings.baseUrl, model: settings.model, timeoutMs: settings.timeoutMs, hasKey: Boolean(settings.apiKey) };
+  return { baseUrl: settings.baseUrl, model: settings.model, timeoutMs: settings.timeoutMs, hasKey: Boolean(settings.apiKey), mode:settings.mode??'api', jsonMode:settings.jsonMode??true, proxyMode:settings.proxyMode??'system', proxyUrl:settings.proxyUrl??'' };
 }
 
 function validateSettings(input: unknown, previous: ProviderSettings): ProviderSettings {
   if (!isRecord(input) || typeof input.baseUrl !== 'string' || typeof input.model !== 'string') {
     throw new ApiError(400, '请填写 API 地址与模型名称');
   }
-  const baseUrl = input.baseUrl.trim().replace(/\/+$/, '');
+  let baseUrl:string;
   try {
-    const parsed = new URL(baseUrl);
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || baseUrl.length > 2048) throw new Error();
+    baseUrl=normalizeApiBaseUrl(input.baseUrl);
   } catch { throw new ApiError(400, 'API 地址必须是有效的 HTTP 或 HTTPS 地址，且不含账号、查询参数或片段'); }
   const model = input.model.trim();
   if (!model || model.length > 160 || /[\r\n]/.test(model)) throw new ApiError(400, '模型名称无效');
   const timeoutMs = input.timeoutMs ?? previous.timeoutMs;
-  if (!Number.isInteger(timeoutMs) || Number(timeoutMs) < 1000 || Number(timeoutMs) > 180000) throw new ApiError(400, '超时需为 1000–180000 毫秒');
+  if (!Number.isInteger(timeoutMs) || Number(timeoutMs) < 1000 || Number(timeoutMs) > 300000) throw new ApiError(400, '超时需为 1000–300000 毫秒');
   if (input.apiKey !== undefined && (typeof input.apiKey !== 'string' || input.apiKey.length > 4096 || /[\r\n]/.test(input.apiKey))) throw new ApiError(400, 'API 密钥格式无效');
-  const apiKey = input.apiKey === undefined ? previous.apiKey : (input.apiKey as string).trim() || undefined;
-  return { baseUrl, model, timeoutMs: Number(timeoutMs), ...(apiKey ? { apiKey } : {}) };
+  const mode=input.mode??previous.mode??'api';
+  if(mode!=='api'&&mode!=='workbuddy')throw new ApiError(400,'AI 接入方式无效');
+  const sameOrigin=new URL(baseUrl).origin===new URL(previous.baseUrl).origin;
+  const jsonMode=input.jsonMode??(sameOrigin&&previous.jsonMode!==undefined?previous.jsonMode:apiProvider(baseUrl)!=='agnes');
+  if(typeof jsonMode!=='boolean')throw new ApiError(400,'JSON 模式设置无效');
+  const proxyMode=input.proxyMode??previous.proxyMode??'system';
+  if(!['system','direct','custom'].includes(proxyMode as string))throw new ApiError(400,'网络代理方式无效');
+  const rawProxy=input.proxyUrl??previous.proxyUrl??'';
+  if(typeof rawProxy!=='string')throw new ApiError(400,'代理地址需为 HTTP 或 HTTPS 地址');
+  let proxyUrl:string|undefined;
+  try{proxyUrl=rawProxy.trim()?normalizeProxyUrl(rawProxy):undefined;}catch{throw new ApiError(400,'代理地址需为 HTTP 或 HTTPS 根地址，且不含账号、密码或参数');}
+  if(proxyMode==='custom'&&!proxyUrl)throw new ApiError(400,'请填写本机 HTTP 代理地址');
+  const apiKey = input.apiKey === undefined ? (sameOrigin?previous.apiKey:undefined) : (input.apiKey as string).trim() || undefined;
+  return { baseUrl, model, timeoutMs: Number(timeoutMs), mode, jsonMode, proxyMode:proxyMode as ProviderSettings['proxyMode'], ...(proxyUrl?{proxyUrl}:{}), ...(apiKey ? { apiKey } : {}) };
 }
 
 export class LocalStore {

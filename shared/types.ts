@@ -22,7 +22,11 @@ export interface Project {
 export type ChangeMode='circuit'|'lesson';
 export interface Proposal { baseRevision:number; project:Project; summary:string; changes:string[]; usage?:Usage }
 export interface Usage { promptTokens:number; completionTokens:number; totalTokens:number; model:string; at:string }
-export interface ProviderSettings { baseUrl:string; model:string; apiKey?:string; hasKey?:boolean; timeoutMs:number }
+export interface ProviderSettings { baseUrl:string; model:string; apiKey?:string; hasKey?:boolean; timeoutMs:number; mode?:'api'|'workbuddy'; jsonMode?:boolean; proxyMode?:'system'|'direct'|'custom'; proxyUrl?:string }
+export interface WorkBuddyTask {
+  id:string; kind:'recognize'|'propose'; mode?:ChangeMode; projectId:string; projectTitle:string;
+  baseRevision:number; createdAt:string; updatedAt:string; status:'pending'|'completed'|'cancelled'; proposal?:Proposal;
+}
 export type ExportFormat='png'|'svg'|'pdf'|'html'|'mp4'|'json';
 export interface ExportJob { id:string; status:'queued'|'running'|'completed'|'failed'; progress:number; format:ExportFormat; filename?:string; path?:string; downloadUrl?:string; error?:string }
 export interface ProjectSummary { id:string; title:string; updatedAt:string; revision:number }

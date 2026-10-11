@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import { mkdir, mkdtemp, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
+import {connect} from 'node:net';
 import { createApp } from '../server/app';
 import type { Project } from '../shared/types';
 
@@ -34,14 +35,14 @@ async function start(dataDir?: string) {
   };
   return {url, dataDir, request};
 }
-async function provider(options: {status?:number; content?:unknown; rawContent?:string; delay?:number; extraBytes?:number} = {}) {
+async function provider(options: {status?:number; content?:unknown; rawContent?:string; delay?:number; extraBytes?:number; error?:unknown} = {}) {
   const calls: {headers: typeof import('node:http').IncomingMessage.prototype.headers; body:any; url:string}[] = [];
   const url = await listen(createServer(async (req,res) => {
     let body=''; for await (const chunk of req) body+=chunk.toString();
     calls.push({headers:req.headers,body:JSON.parse(body),url:req.url??''});
     if(options.delay) await new Promise(resolve=>setTimeout(resolve,options.delay));
     res.writeHead(options.status??200, {'content-type':'application/json'});
-    res.end(JSON.stringify(options.status ? {error:{message:'sk-secret-upstream private diagnostic'}} : {
+    res.end(JSON.stringify(options.status ? {error:options.error??{message:'sk-secret-upstream private diagnostic'}} : {
       model:'local-vision', choices:[{message:{content:options.rawContent ?? JSON.stringify(options.content??{ok:true})}}],
       usage:{prompt_tokens:20,completion_tokens:8,total_tokens:28}, padding: 'x'.repeat(options.extraBytes ?? 0)
     }));
@@ -54,6 +55,32 @@ async function configure(api: Awaited<ReturnType<typeof start>>, url:string, ext
 afterEach(async()=>{ await Promise.all(running.splice(0).map(server=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());}))); });
 
 describe('local project API',()=>{
+  it('accepts provider roots and complete endpoints without duplicating the completion path',async()=>{
+    const api=await start();
+    for(const [baseUrl,expected] of [
+      ['https://api.openai.com','https://api.openai.com/v1'],
+      ['https://api.openai.com/v1/chat/completions/','https://api.openai.com/v1'],
+      ['https://api.deepseek.com/chat/completions','https://api.deepseek.com'],
+      ['https://apihub.agnes-ai.com','https://apihub.agnes-ai.com/v1'],
+    ]) {
+      const result=await configure(api,baseUrl,{baseUrl});
+      expect(result.status).toBe(200);expect(result.body.settings.baseUrl).toBe(expected);
+    }
+  });
+  it('does not reuse a saved key for a different provider origin',async()=>{
+    const api=await start();await configure(api,'https://api.openai.com');
+    const changed=await api.request('/api/settings',{baseUrl:'https://api.deepseek.com',model:'deepseek-v4-pro',timeoutMs:60000},'PUT');
+    expect(changed.body.settings.hasKey).toBe(false);
+    expect(changed.body.settings.model).toBe('deepseek-v4-pro');
+  });
+  it('persists WorkBuddy mode and the JSON compatibility choice without requiring a key',async()=>{
+    const api=await start();
+    const saved=await api.request('/api/settings',{baseUrl:'https://api.openai.com/v1',model:'gpt-4.1-mini',timeoutMs:300000,mode:'workbuddy',jsonMode:false},'PUT');
+    expect(saved.status).toBe(200);
+    expect(saved.body.settings).toMatchObject({mode:'workbuddy',jsonMode:false,timeoutMs:300000,hasKey:false});
+    const restarted=await start(api.dataDir);
+    expect((await restarted.request('/api/settings')).body.settings.mode).toBe('workbuddy');
+  });
   it('persists versioned saves across restart and restores without overwriting history',async()=>{
     const api=await start(); const project=fixture();
     expect((await api.request(`/api/projects/${project.id}`,{project},'PUT')).status).toBe(200);
@@ -141,6 +168,37 @@ describe('local project API',()=>{
 });
 
 describe('real OpenAI-compatible HTTP boundary',()=>{
+  it('routes a model request through an explicitly configured HTTP CONNECT proxy',async()=>{
+    const mock=await provider();const tunnelServer=createServer();let connections=0;
+    tunnelServer.on('connect',(req,socket,head)=>{
+      connections++;const [host,port]=req.url!.split(':');const upstream=connect(Number(port),host,()=>{
+        socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');if(head.length)upstream.write(head);socket.pipe(upstream);upstream.pipe(socket);
+      });
+      socket.on('close',()=>upstream.destroy());upstream.on('close',()=>socket.destroy());upstream.on('error',()=>socket.destroy());socket.on('error',()=>upstream.destroy());
+    });
+    const proxyUrl=await listen(tunnelServer);const api=await start();
+    await configure(api,mock.url,{proxyMode:'custom',proxyUrl});
+    expect((await api.request('/api/settings/test',{})).body.ok).toBe(true);
+    expect(connections).toBe(1);expect(mock.calls[0].headers.authorization).toBe('Bearer sk-secret-test');
+  });
+  it.each([
+    {status:401,error:{message:'sk-secret-upstream',code:'invalid_api_key'},hint:'密钥'},
+    {status:402,error:{message:'sk-secret-upstream'},hint:'余额'},
+    {status:404,error:{message:'sk-secret-upstream',code:'model_not_found'},hint:'模型'},
+    {status:429,error:{message:'sk-secret-upstream',code:'insufficient_quota'},hint:'额度'},
+    {status:400,error:{message:'response_format is not supported sk-secret-upstream'},hint:'JSON 模式'},
+  ])('explains upstream failures without exposing diagnostics ($status)',async({status,error,hint})=>{
+    const mock=await provider({status,error});const api=await start();await configure(api,mock.url);
+    const result=await api.request('/api/settings/test',{});
+    expect(result.status).toBe(502);expect(result.body.error).toContain(hint);
+    expect(result.body.error).toContain(String(status));expect(result.body.error).not.toContain('sk-secret');
+  });
+  it('can call a compatible API that does not support response_format',async()=>{
+    const mock=await provider();const api=await start();await configure(api,mock.url,{jsonMode:false});
+    expect((await api.request('/api/settings/test',{})).body.ok).toBe(true);
+    expect(mock.calls[0].body).not.toHaveProperty('response_format');
+    expect(mock.calls[0].body).not.toHaveProperty('temperature');
+  });
   it('sends visual content and schema instructions, records usage, and clears stale lessons on recognition',async()=>{
     const project=fixture();
     const mock=await provider({content:{circuit:{components:[{...project.circuit.components[0],id:'recognized',label:'识别电源'}],junctions:[],wires:[]},uncertainties:[{id:'u1',message:'请确认电压',targetIds:['recognized'],resolved:false}],summary:'识别完成'}});
@@ -156,6 +214,7 @@ describe('real OpenAI-compatible HTTP boundary',()=>{
     expect(mock.calls[0].body.messages[1].content).toContainEqual({type:'image_url',image_url:{url:PHOTO}});
     expect(mock.calls[0].body.messages[0].content).toContain('30');
     expect(mock.calls[0].body.response_format).toEqual({type:'json_object'});
+    expect(mock.calls[0].body).not.toHaveProperty('temperature');
     expect((await api.request(`/api/projects/${project.id}`)).body.project.circuit.components[0].id).toBe('battery1');
     const usage=await api.request('/api/usage'); expect(usage.body.usage[0]).toMatchObject({model:'local-vision',totalTokens:28});
     expect(JSON.stringify(usage.body)).not.toContain('sk-secret'); expect(JSON.stringify(usage.body)).not.toContain(PHOTO);

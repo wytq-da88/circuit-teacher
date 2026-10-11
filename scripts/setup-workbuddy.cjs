@@ -1,0 +1,17 @@
+const fs=require('node:fs');
+const path=require('node:path');
+const root=path.resolve(__dirname,'..');
+const directory=path.join(root,'.cache','workbuddy');
+fs.mkdirSync(directory,{recursive:true});
+const filename=path.join(directory,'mcp.json');
+const configuration=JSON.stringify({mcpServers:{'circuit-teacher':{type:'stdio',command:process.execPath,args:[path.join(root,'scripts','workbuddy-mcp.mjs')]}}},null,2)+'\n';
+const bundle=path.join(directory,'circuit-teacher-connector');
+fs.mkdirSync(bundle,{recursive:true});
+for(const name of ['connector-meta.json','icon.svg'])fs.copyFileSync(path.join(root,'integrations','workbuddy',name),path.join(bundle,name));
+fs.writeFileSync(filename,configuration,'utf8');
+fs.writeFileSync(path.join(bundle,'mcp.json'),configuration,'utf8');
+console.log('WorkBuddy MCP configuration: '+filename);
+console.log('Connector directory: '+bundle);
+console.log('Add the generated MCP configuration in WorkBuddy > Custom connector.');
+console.log('Start Circuit Teacher before using its tools.');
+console.log('Guide: '+path.join(root,'docs','WorkBuddy接入.md'));

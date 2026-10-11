@@ -1,0 +1,20 @@
+{
+  "name": "电路课件工坊",
+  "name_zh": "电路课件工坊",
+  "name_en": "Circuit Teacher",
+  "description": "处理本机工坊提交的电路照片与中文修改任务，回传经校验的草稿供用户确认。",
+  "description_zh": "处理本机工坊提交的电路照片与中文修改任务，回传经校验的草稿供用户确认。",
+  "description_en": "Read queued circuit lessons and return validated drafts for the user to review.",
+  "source": "circuit-teacher-wytq-da88",
+  "type": "mcp",
+  "version": "0.1.1",
+  "minWorkbuddyVersion": "4.24.0",
+  "examples_zh": [
+    "查看电路课件工坊的待办，按要求生成修改草稿。",
+    "读取我指定的工坊照片任务，识别电路并回传待校对草稿。"
+  ],
+  "examples_en": [
+    "Read the pending Circuit Teacher tasks and return the requested draft.",
+    "Recognize the circuit photo in my specified task and submit a draft for review."
+  ]
+}
