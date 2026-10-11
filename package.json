@@ -1,0 +1,10 @@
+{
+  "name": "circuit-teacher", "version": "0.1.0", "private": true, "type": "module",
+  "description": "将电路照片转成可编辑原理图与教学演示的本地网页工作台",
+  "license": "MIT",
+  "repository": {"type":"git", "url":"https://github.com/wytq-da88/circuit-teacher.git"},
+  "engines": {"node":">=22"},
+  "scripts": {"dev":"tsx watch server/index.ts", "build":"tsc --noEmit && vite build", "start":"tsx server/index.ts --production", "test":"vitest run", "typecheck":"tsc --noEmit", "setup:video":"node scripts/setup-video.cjs", "test:exports":"tsx tests/export-smoke.ts"},
+  "dependencies": {"@xyflow/react":"12.12.0", "react":"^19.2.0", "react-dom":"^19.2.0", "lucide-react":"^0.468.0", "express":"^5.1.0", "zod":"^4.1.0", "hyperframes":"0.8.144", "puppeteer-core":"^24.0.0"},
+  "devDependencies": {"@types/express":"^5.0.0", "@types/node":"^24.0.0", "@types/react":"^19.2.0", "@types/react-dom":"^19.2.0", "@vitejs/plugin-react":"^5.0.0", "typescript":"^5.9.0", "tsx":"^4.20.0", "vite":"^7.1.0", "vitest":"^3.2.0"}
+}

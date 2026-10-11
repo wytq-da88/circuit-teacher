@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.cache/
+data/
+exports/
+logs/
+.env*
+!.env.example
+.superpowers/
+.tools/
+releases/
+docs/implementation-plan.md
+docs/progress.md
+docs/*verification*.json
+docs/*验收*.json
+*.log
+tests/core-red.node.mjs
