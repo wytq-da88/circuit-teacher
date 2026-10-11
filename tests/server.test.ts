@@ -109,6 +109,7 @@ describe('local project API',()=>{
   });
   it('exports JSON asynchronously, reports its actual workspace path and serves the completed file',async()=>{
     const api=await start();const project=fixture();
+    project.title='.下载路径验证';
     const started=await api.request('/api/exports',{project,format:'json',timeMs:0});
     expect(started.status).toBe(200);
     let job=started.body.job;
@@ -117,6 +118,7 @@ describe('local project API',()=>{
       job=(await api.request(`/api/exports/${job.id}`)).body.job;
     }
     expect(job.status).toBe('completed');expect(job.progress).toBe(100);
+    expect(job.filename).toBe('.下载路径验证.json');
     expect(path.relative(path.resolve('exports'),job.path)).not.toMatch(/^\.\./);
     expect(path.isAbsolute(job.path)).toBe(true);
     expect(JSON.parse(await readFile(job.path,'utf8'))).toEqual(project);

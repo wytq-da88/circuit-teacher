@@ -111,7 +111,10 @@ export async function createApp(options: AppOptions = {}) {
     const job = getExportJob(req.params.id);
     const filename = getExportFile(req.params.id);
     if (!job || job.status !== 'completed' || !filename) throw new ApiError(404, '导出文件尚未就绪');
-    res.download(filename, job.filename ?? path.basename(filename), error => { if (error) next(new ApiError(500, '下载文件失败，请重新导出')); });
+    const directory=path.join(PROJECT_ROOT,'exports'),relative=path.relative(directory,filename);
+    if (!relative || relative==='..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new ApiError(403,'导出文件路径无效');
+    // Only this completed job's file is served, including user titles beginning with a dot.
+    res.download(relative, job.filename ?? path.basename(filename), {root:directory,dotfiles:'allow'}, error => { if (error) next(new ApiError(500, '下载文件失败，请重新导出')); });
   });
   app.use('/api', (_req, _res, next) => next(new ApiError(404, '接口不存在')));
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
